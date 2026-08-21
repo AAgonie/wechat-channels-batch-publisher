@@ -416,6 +416,25 @@
     return JSON.stringify({ buttons, videos, blocking, errors }).slice(0, 1800);
   }
 
+  async function waitForStablePublishButton(doc, label, timeout, isCancelled) {
+    const started = Date.now();
+    let enabledSince = 0;
+    while (Date.now() - started < timeout) {
+      if (isCancelled()) throw new Error("已取消");
+      const errors = visibleWebsiteStatusTexts(doc, /(上传失败|处理失败|转码失败)/);
+      if (errors.length) throw new Error(`网站报告视频处理失败：${errors.join(" | ")}`);
+      const button = findPublishButton(doc);
+      if (button) {
+        if (!enabledSince) enabledSince = Date.now();
+        if (Date.now() - enabledSince >= 1500) return button;
+      } else {
+        enabledSince = 0;
+      }
+      await sleep(250);
+    }
+    throw new Error(`等待超时：${label}；就绪诊断=${publishReadinessDiagnostics(doc)}`);
+  }
+
   async function runCreateFrameJob(
     payload,
     report,
@@ -532,13 +551,9 @@
     }
 
     report("视频正在上传和处理，请等待…");
-    let publish = await waitFor(() => {
-      const blocking = visibleWebsiteStatusTexts(doc, /(正在上传|上传中|等待上传|正在处理|处理中|正在转码|转码中)/);
-      const errors = visibleWebsiteStatusTexts(doc, /(上传失败|处理失败|转码失败)/);
-      if (errors.length) throw new Error(`网站报告视频处理失败：${errors.join(" | ")}`);
-      const button = findPublishButton(doc);
-      return button && blocking.length === 0 ? button : null;
-    }, `视频上传和处理完成；就绪诊断=${publishReadinessDiagnostics(doc)}`, TIMEOUTS.upload, isCancelled);
+    let publish = await waitForStablePublishButton(
+      doc, "视频上传和处理完成", TIMEOUTS.upload, isCancelled
+    );
     let reviewedManually = false;
     if (requestManualReview && await requestManualReview(doc)) {
       reviewedManually = true;
@@ -549,10 +564,9 @@
     if (!reviewedManually && requestManualCoverEdit) {
       await requestManualCoverEdit(doc);
       report("封面编辑已确认，正在重新检查发表状态…");
-      publish = await waitFor(() => {
-        const blocking = visibleWebsiteStatusTexts(doc, /(正在上传|上传中|等待上传|正在处理|处理中|正在转码|转码中)/);
-        return blocking.length === 0 ? findPublishButton(doc) : null;
-      }, `封面编辑后的发表按钮；就绪诊断=${publishReadinessDiagnostics(doc)}`, TIMEOUTS.normal, isCancelled);
+      publish = await waitForStablePublishButton(
+        doc, "封面编辑后的发表按钮", TIMEOUTS.normal, isCancelled
+      );
     }
     report("正在发表…");
     publish.click();
