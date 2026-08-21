@@ -1,0 +1,62 @@
+name: 问题反馈
+description: 报告发布流程、页面定位或浏览器兼容问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。提交前请删除 Cookie、会话 ID、账号、剧名、文件名和视频画面等敏感信息。
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器与版本
+      placeholder: 例如 Chrome 128.0.x 或 Edge 128.0.x
+    validations:
+      required: true
+  - type: input
+    id: extension
+    attributes:
+      label: 扩展版本
+      placeholder: 例如 1.1.2
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: 出错阶段
+      options:
+        - 打开发表页面
+        - 上传视频
+        - 填写描述或短标题
+        - 选择链接或短剧
+        - 人工接管
+        - AI 内容标注
+        - 编辑封面
+        - 点击发表
+        - 返回列表或下一条
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: message
+    attributes:
+      label: 完整暂停或诊断信息
+      description: 请原样粘贴助手面板中的文字，并删除敏感内容。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: 说明选择了多少文件、进行了哪些操作、预期结果和实际结果。
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已确认内容中不包含 Cookie、会话 ID、账号信息、未公开视频或其他敏感数据。
+          required: true
