@@ -41,6 +41,7 @@ async function listFrameAction(action, maxWaitMs) {
 
 function fillDescriptionInMainWorld(value) {
   const normalize = (text) => String(text || "").replace(/\s+/g, " ").trim();
+  const expected = normalize(value);
   const isVisible = (element) => {
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);
@@ -83,7 +84,7 @@ function fillDescriptionInMainWorld(value) {
   } catch (error) {
     return { ok: false, url: location.href, error: error.message };
   }
-  if (!inserted || normalize(editor.textContent) !== value) {
+  if (!inserted || normalize(editor.textContent) !== expected) {
     return {
       ok: false,
       url: location.href,

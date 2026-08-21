@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "视频号助手批量发布 Edge",
-  "version": "1.1.2",
-  "description": "Edge 稳定版视频号批量发布助手，所有等待时限增加 10 秒。",
+  "version": "1.2.0",
+  "description": "Edge 可配置版视频号批量发布助手，等待时限比 Chrome 增加 10 秒。",
   "permissions": ["activeTab", "scripting"],
   "background": {
     "service_worker": "background.js"
