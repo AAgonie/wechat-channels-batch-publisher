@@ -1,5 +1,5 @@
 const IS_EDGE_BUILD = chrome.runtime.getManifest().name.includes("Edge");
-const LIST_FRAME_WAIT_MS = IS_EDGE_BUILD ? 20000 : 10000;
+const LIST_FRAME_WAIT_MS = (IS_EDGE_BUILD ? 10000 : 0) + 15000;
 
 async function injectAllFrames(tabId) {
   await chrome.scripting.executeScript({

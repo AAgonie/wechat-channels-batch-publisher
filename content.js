@@ -12,14 +12,13 @@
     linkType: "小程序短剧",
     videoMark: "含AI生成内容",
     declareOriginal: false,
-    manualCoverEnabled: false,
-    manualReviewEnabled: false
+    manualCoverEnabled: false
   });
   const EXTRA_WAIT_MS = IS_EDGE_BUILD ? 10000 : 0;
   const TIMEOUTS = {
-    normal: 20000 + EXTRA_WAIT_MS,
-    upload: 60000 + EXTRA_WAIT_MS,
-    returnToList: 60000 + EXTRA_WAIT_MS
+    normal: 30000 + EXTRA_WAIT_MS,
+    upload: 90000 + EXTRA_WAIT_MS,
+    returnToList: 90000 + EXTRA_WAIT_MS
   };
   const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
   const dramaNameFromFolder = (value) => normalize(value).replace(/^剪辑\s*[-－—]\s*/, "").trim();
@@ -540,19 +539,20 @@
       const button = findPublishButton(doc);
       return button && blocking.length === 0 ? button : null;
     }, `视频上传和处理完成；就绪诊断=${publishReadinessDiagnostics(doc)}`, TIMEOUTS.upload, isCancelled);
-    if (requestManualCoverEdit) {
+    let reviewedManually = false;
+    if (requestManualReview && await requestManualReview(doc)) {
+      reviewedManually = true;
+      report("人工检查已确认，准备直接发表…");
+      publish = findPublishButton(doc);
+      if (!publish) throw new Error("人工检查后当前没有可点击的“发表”按钮");
+    }
+    if (!reviewedManually && requestManualCoverEdit) {
       await requestManualCoverEdit(doc);
       report("封面编辑已确认，正在重新检查发表状态…");
       publish = await waitFor(() => {
         const blocking = visibleWebsiteStatusTexts(doc, /(正在上传|上传中|等待上传|正在处理|处理中|正在转码|转码中)/);
         return blocking.length === 0 ? findPublishButton(doc) : null;
       }, `封面编辑后的发表按钮；就绪诊断=${publishReadinessDiagnostics(doc)}`, TIMEOUTS.normal, isCancelled);
-    }
-    if (requestManualReview) {
-      await requestManualReview(doc);
-      report("人工检查已确认，准备直接发表…");
-      publish = findPublishButton(doc);
-      if (!publish) throw new Error("人工检查后当前没有可点击的“发表”按钮");
     }
     report("正在发表…");
     publish.click();
@@ -590,7 +590,10 @@
   function loadSettings() {
     try {
       const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
-      return { ...DEFAULT_SETTINGS, ...(saved && typeof saved === "object" ? saved : {}) };
+      if (!saved || typeof saved !== "object") return { ...DEFAULT_SETTINGS };
+      return Object.fromEntries(Object.keys(DEFAULT_SETTINGS).map((key) => [
+        key, Object.prototype.hasOwnProperty.call(saved, key) ? saved[key] : DEFAULT_SETTINGS[key]
+      ]));
     } catch {
       return { ...DEFAULT_SETTINGS };
     }
@@ -607,7 +610,7 @@
   const state = {
     files: [], sourceFolderName: "", folderName: "", running: false, cancelled: false,
     currentIndex: -1, completedCount: 0, manualSelection: null,
-    searchKeyword: "", settings: loadSettings()
+    searchKeyword: "", manualReviewRequested: false, settings: loadSettings()
   };
   let panel;
   let removePanelDragHandlers = null;
@@ -639,6 +642,12 @@
     panel.querySelector("[data-cancel]").disabled = !state.running;
     panel.querySelector("[data-folder]").disabled = state.running;
     for (const control of panel.querySelectorAll("[data-setting]")) control.disabled = state.running;
+    const reviewButton = panel.querySelector("[data-review-next]");
+    reviewButton.disabled = !state.running || state.manualReviewRequested ||
+      ["cover", "review"].includes(state.manualSelection?.type);
+    reviewButton.textContent = state.manualReviewRequested
+      ? "已预约：下次发表前暂停"
+      : "下次发表前暂停并人工检查";
   }
 
   function requestManualDramaSelection(doc, searchKeyword, linkType) {
@@ -675,6 +684,8 @@
   }
 
   function requestManualReview(doc) {
+    if (!state.manualReviewRequested) return Promise.resolve(false);
+    state.manualReviewRequested = false;
     return new Promise((resolve) => {
       state.manualSelection = { type: "review", doc, resolve };
       status = "已停在发表前。你可以任意修改内容；完成后点击“继续”，脚本将不审查修改内容并直接发表。";
@@ -746,9 +757,9 @@
     },
     () => state.cancelled,
     requestManualDramaSelection,
-    state.settings.manualCoverEnabled && !state.settings.manualReviewEnabled ? requestManualCoverEdit : null,
+    state.settings.manualCoverEnabled ? requestManualCoverEdit : null,
     requestManualOriginal,
-    state.settings.manualReviewEnabled ? requestManualReview : null);
+    requestManualReview);
   }
 
   async function publishOne(file) {
@@ -785,6 +796,7 @@
       updatePanel(`已暂停：${error.message}`);
     } finally {
       state.running = false;
+      state.manualReviewRequested = false;
       state.currentIndex = -1;
       updatePanel();
     }
@@ -792,6 +804,7 @@
 
   function stopQueue() {
     state.cancelled = true;
+    state.manualReviewRequested = false;
     const pending = state.manualSelection;
     state.manualSelection = null;
     if (pending) pending.resolve(null);
@@ -920,6 +933,8 @@
         #video-batch-assistant-panel [data-start] { color:#fff; background:#f27628; }
         #video-batch-assistant-panel [data-continue] { color:#7a4a00; background:#ffd666; }
         #video-batch-assistant-panel [data-cancel] { color:#475467; background:#eef1f4; }
+        #video-batch-assistant-panel [data-review-next] { width:100%; margin-top:12px; color:#7a4a00; background:#fff0bd; border:1px solid #f5cf67; }
+        #video-batch-assistant-panel [data-review-next]:not(:disabled):hover { background:#ffe69a; }
         #video-batch-assistant-panel .vba-note { margin-top:9px; color:#98a2b3; font-size:11px; text-align:center; }
       </style>
       <div class="vba-head">
@@ -950,14 +965,14 @@
       </div>
       <label class="vba-option"><input data-setting data-declare-original type="checkbox">自动声明原创（失败时人工接管）</label>
       <label class="vba-option"><input data-setting data-manual-cover type="checkbox">发布前人工编辑封面（可选）</label>
-      <label class="vba-option"><input data-setting data-manual-review type="checkbox">发表前人工检查全部内容（继续后直接发表）</label>
+      <button data-review-next disabled>下次发表前暂停并人工检查</button>
       <div class="vba-status" data-status-card data-kind="idle"><span data-status>请选择一个剧集文件夹</span></div>
       <div class="vba-actions">
         <button data-start disabled>开始发布</button>
         <button data-continue disabled>继续</button>
         <button data-cancel disabled>停止</button>
       </div>
-      <div class="vba-note">设置会保存；同时勾选两种人工模式时，只在“全部内容”阶段暂停一次</div>
+      <div class="vba-note">运行中可随时预约下一次发表前暂停；每点击一次只生效一次</div>
     `;
     Object.assign(panel.style, {
       position: "fixed", right: "24px", bottom: "24px", zIndex: "2147483647", width: "400px", maxWidth: "calc(100vw - 16px)", maxHeight: "calc(100vh - 16px)", overflowY: "auto",
@@ -968,14 +983,19 @@
     panel.querySelector("[data-start]").addEventListener("click", runQueue);
     panel.querySelector("[data-continue]").addEventListener("click", continueAfterManualSelection);
     panel.querySelector("[data-cancel]").addEventListener("click", stopQueue);
+    panel.querySelector("[data-review-next]").addEventListener("click", () => {
+      if (!state.running || state.manualReviewRequested) return;
+      state.manualReviewRequested = true;
+      status = "已预约：将在下一次点击“发表”之前暂停，届时可人工修改全部内容。";
+      updatePanel();
+    });
     const settingsBindings = [
       ["[data-description]", "description", "value"],
       ["[data-short-title]", "shortTitle", "value"],
       ["[data-link-type]", "linkType", "value"],
       ["[data-video-mark]", "videoMark", "value"],
       ["[data-declare-original]", "declareOriginal", "checked"],
-      ["[data-manual-cover]", "manualCoverEnabled", "checked"],
-      ["[data-manual-review]", "manualReviewEnabled", "checked"]
+      ["[data-manual-cover]", "manualCoverEnabled", "checked"]
     ];
     for (const [selector, key, property] of settingsBindings) {
       const control = panel.querySelector(selector);
