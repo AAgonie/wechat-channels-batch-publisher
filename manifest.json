@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "视频号助手批量发布",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "可配置的视频号批量发布助手，支持双剧集链接、原创声明与人工接管。",
   "permissions": ["activeTab", "scripting"],
   "background": {
