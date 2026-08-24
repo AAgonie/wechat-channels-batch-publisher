@@ -416,19 +416,20 @@
     return JSON.stringify({ buttons, videos, blocking, errors }).slice(0, 1800);
   }
 
-  async function waitForStablePublishButton(doc, label, timeout, isCancelled) {
+  async function waitForUploadCompletionAndPublishButton(doc, label, timeout, isCancelled) {
     const started = Date.now();
-    let enabledSince = 0;
+    let readySince = 0;
     while (Date.now() - started < timeout) {
       if (isCancelled()) throw new Error("已取消");
       const errors = visibleWebsiteStatusTexts(doc, /(上传失败|处理失败|转码失败)/);
       if (errors.length) throw new Error(`网站报告视频处理失败：${errors.join(" | ")}`);
+      const blocking = visibleWebsiteStatusTexts(doc, /(正在上传|上传中|等待上传|正在处理|处理中|正在转码|转码中)/);
       const button = findPublishButton(doc);
-      if (button) {
-        if (!enabledSince) enabledSince = Date.now();
-        if (Date.now() - enabledSince >= 1500) return button;
+      if (button && blocking.length === 0) {
+        if (!readySince) readySince = Date.now();
+        if (Date.now() - readySince >= 1500) return button;
       } else {
-        enabledSince = 0;
+        readySince = 0;
       }
       await sleep(250);
     }
@@ -551,7 +552,7 @@
     }
 
     report("视频正在上传和处理，请等待…");
-    let publish = await waitForStablePublishButton(
+    let publish = await waitForUploadCompletionAndPublishButton(
       doc, "视频上传和处理完成", TIMEOUTS.upload, isCancelled
     );
     let reviewedManually = false;
@@ -564,7 +565,7 @@
     if (!reviewedManually && requestManualCoverEdit) {
       await requestManualCoverEdit(doc);
       report("封面编辑已确认，正在重新检查发表状态…");
-      publish = await waitForStablePublishButton(
+      publish = await waitForUploadCompletionAndPublishButton(
         doc, "封面编辑后的发表按钮", TIMEOUTS.normal, isCancelled
       );
     }
