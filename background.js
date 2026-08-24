@@ -1,5 +1,5 @@
 const IS_EDGE_BUILD = chrome.runtime.getManifest().name.includes("Edge");
-const LIST_FRAME_WAIT_MS = IS_EDGE_BUILD ? 20000 : 10000;
+const LIST_FRAME_WAIT_MS = (IS_EDGE_BUILD ? 10000 : 0) + 15000;
 
 async function injectAllFrames(tabId) {
   await chrome.scripting.executeScript({
@@ -16,8 +16,35 @@ chrome.action.onClicked.addListener(async (tab) => {
 
 async function listFrameAction(action, maxWaitMs) {
   const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim();
-  const findMatches = () => [...document.querySelectorAll("button")]
-    .filter((button) => normalize(button.textContent) === "发表视频");
+  const isVisible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = element.ownerDocument.defaultView.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+  };
+  const collectDocuments = () => {
+    const documents = [];
+    const seen = new Set();
+    const visit = (currentWindow) => {
+      try {
+        const currentDocument = currentWindow.document;
+        if (!currentDocument || seen.has(currentDocument)) return;
+        seen.add(currentDocument);
+        documents.push({ doc: currentDocument, url: currentWindow.location.href });
+        for (const frame of currentDocument.querySelectorAll("iframe, frame")) {
+          if (frame.contentWindow) visit(frame.contentWindow);
+        }
+      } catch {
+        // Cross-origin frames are outside the current website automation scope.
+      }
+    };
+    visit(window);
+    return documents;
+  };
+  const findMatches = () => collectDocuments().flatMap(({ doc, url }) =>
+    [...doc.querySelectorAll("button")]
+      .filter((button) => isVisible(button) && normalize(button.textContent) === "发表视频")
+      .map((button) => ({ button, url }))
+  );
 
   let matches = findMatches();
   const started = Date.now();
@@ -25,22 +52,28 @@ async function listFrameAction(action, maxWaitMs) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     matches = findMatches();
   }
-  if (action === "click-list-publish" && matches.length === 1) matches[0].click();
+  if (action === "click-list-publish" && matches.length === 1) matches[0].button.click();
+
+  const documents = collectDocuments();
 
   return {
     ok: matches.length === 1,
     count: matches.length,
-    url: location.href,
+    url: matches[0]?.url || location.href,
     diagnostic: {
-      buttonTexts: [...document.querySelectorAll("button")]
-        .map((button) => normalize(button.textContent)).filter(Boolean).slice(0, 20),
-      bodyHasPublishText: normalize(document.body?.innerText).includes("发表视频")
+      documents: documents.map(({ doc, url }) => ({
+        url,
+        buttonTexts: [...doc.querySelectorAll("button")]
+          .map((button) => normalize(button.textContent)).filter(Boolean).slice(0, 20),
+        bodyHasPublishText: normalize(doc.body?.innerText).includes("发表视频")
+      }))
     }
   };
 }
 
 function fillDescriptionInMainWorld(value) {
   const normalize = (text) => String(text || "").replace(/\s+/g, " ").trim();
+  const expected = normalize(value);
   const isVisible = (element) => {
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);
@@ -83,7 +116,7 @@ function fillDescriptionInMainWorld(value) {
   } catch (error) {
     return { ok: false, url: location.href, error: error.message };
   }
-  if (!inserted || normalize(editor.textContent) !== value) {
+  if (!inserted || normalize(editor.textContent) !== expected) {
     return {
       ok: false,
       url: location.href,
@@ -124,7 +157,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!["click-list-publish", "check-list"].includes(message.type)) return;
 
   chrome.scripting.executeScript({
-    target: { tabId: sender.tab.id, allFrames: true },
+    target: { tabId: sender.tab.id },
     world: "MAIN",
     func: listFrameAction,
     args: [message.type, LIST_FRAME_WAIT_MS]
@@ -135,7 +168,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ok: false,
       count: 0,
       detail: frameResults.map((item) =>
-        `${item.url || "unknown"}: ${item.count}; buttons=${(item.diagnostic?.buttonTexts || []).join(",") || "none"}; bodyHas=${item.diagnostic?.bodyHasPublishText}`
+        `${item.url || "unknown"}: ${item.count}; documents=${JSON.stringify(item.diagnostic?.documents || []).slice(0, 1400)}`
       ).join(" | ")
     });
   }).catch((error) => sendResponse({ ok: false, error: error.message }));
