@@ -12,7 +12,8 @@
     linkType: "小程序短剧",
     videoMark: "含AI生成内容",
     declareOriginal: false,
-    manualCoverEnabled: false
+    manualCoverEnabled: false,
+    publishDelaySeconds: 10
   });
   const EXTRA_WAIT_MS = IS_EDGE_BUILD ? 10000 : 0;
   const TIMEOUTS = {
@@ -788,12 +789,32 @@
     if (!listResult?.ok) throw new Error(listResult?.error || `返回列表后发表视频按钮匹配数量为 ${listResult?.count ?? 0}`);
   }
 
+  async function waitBeforeNextVideo(seconds) {
+    const endsAt = Date.now() + seconds * 1000;
+    let previousRemaining = -1;
+    while (Date.now() < endsAt) {
+      if (state.cancelled) throw new Error("已取消");
+      const remaining = Math.max(1, Math.ceil((endsAt - Date.now()) / 1000));
+      if (remaining !== previousRemaining) {
+        previousRemaining = remaining;
+        updatePanel(`本条已发表，等待 ${remaining} 秒后处理下一条…`);
+      }
+      await sleep(Math.min(250, Math.max(1, endsAt - Date.now())));
+    }
+  }
+
   async function runQueue() {
     if (state.running || !state.files.length) return;
     if (state.settings.linkType !== "不关联链接" && !normalize(state.searchKeyword)) {
       updatePanel("请先填写短剧搜索词，或把链接类型设为“不关联链接”");
       return;
     }
+    const publishDelaySeconds = Number(state.settings.publishDelaySeconds);
+    if (!Number.isFinite(publishDelaySeconds) || publishDelaySeconds < 0) {
+      updatePanel("“每条发表后等待”必须是大于或等于 0 的秒数");
+      return;
+    }
+    state.settings.publishDelaySeconds = publishDelaySeconds;
     saveSettings();
     state.running = true;
     state.cancelled = false;
@@ -801,10 +822,14 @@
     status = `准备发布，共 ${state.files.length} 个视频…`;
     updatePanel();
     try {
-      for (const file of state.files) {
+      for (let index = 0; index < state.files.length; index += 1) {
+        const file = state.files[index];
         await publishOne(file);
         state.completedCount += 1;
         updatePanel(`已完成：${file.name}`);
+        if (index < state.files.length - 1 && publishDelaySeconds > 0) {
+          await waitBeforeNextVideo(publishDelaySeconds);
+        }
       }
       updatePanel("全部完成");
     } catch (error) {
@@ -934,6 +959,8 @@
         #video-batch-assistant-panel .vba-field textarea:focus,
         #video-batch-assistant-panel .vba-field input:focus,
         #video-batch-assistant-panel .vba-field select:focus { border-color:#f27628; box-shadow:0 0 0 2px rgba(242,118,40,.12); }
+        #video-batch-assistant-panel .vba-input-suffix { display:flex; align-items:center; gap:7px; color:#667085; }
+        #video-batch-assistant-panel .vba-input-suffix input { flex:1; }
         #video-batch-assistant-panel .vba-option { display:flex; align-items:center; gap:8px; margin-top:12px; padding:10px 11px; border:1px solid #eceef1; border-radius:9px; background:#fff; color:#475467; font-size:13px; cursor:pointer; }
         #video-batch-assistant-panel .vba-option input { width:16px; height:16px; margin:0; accent-color:#f27628; }
         #video-batch-assistant-panel .vba-option:has(input:disabled) { opacity:.55; cursor:not-allowed; }
@@ -977,6 +1004,7 @@
           <option>含AI生成内容</option><option>无需标注</option><option>内容为虚构剧情，仅供娱乐</option>
           <option>个人观点，仅供参考</option><option>内容包含营销广告</option><option>不设置</option>
         </select></label>
+        <label class="vba-field"><span>发表后等待</span><span class="vba-input-suffix"><input data-setting data-publish-delay type="number" min="0" step="1"><small>秒</small></span></label>
       </div>
       <label class="vba-option"><input data-setting data-declare-original type="checkbox">自动声明原创（失败时人工接管）</label>
       <label class="vba-option"><input data-setting data-manual-cover type="checkbox">发布前人工编辑封面（可选）</label>
@@ -1009,6 +1037,7 @@
       ["[data-short-title]", "shortTitle", "value"],
       ["[data-link-type]", "linkType", "value"],
       ["[data-video-mark]", "videoMark", "value"],
+      ["[data-publish-delay]", "publishDelaySeconds", "value"],
       ["[data-declare-original]", "declareOriginal", "checked"],
       ["[data-manual-cover]", "manualCoverEnabled", "checked"]
     ];
@@ -1026,6 +1055,10 @@
     for (const [control, key] of [[descriptionControl, "description"], [shortTitleControl, "shortTitle"]]) {
       control.addEventListener("input", () => { state.settings[key] = control.value; });
     }
+    const publishDelayControl = panel.querySelector("[data-publish-delay]");
+    publishDelayControl.addEventListener("input", () => {
+      state.settings.publishDelaySeconds = publishDelayControl.value;
+    });
     const searchControl = panel.querySelector("[data-search-keyword]");
     searchControl.value = state.searchKeyword;
     searchControl.addEventListener("input", () => {
